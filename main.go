@@ -75,7 +75,11 @@ func getFilesToProcess(mode string, directory string, checksumDB *ChecksumDB) ([
 	case "check", "update":
 		// Traverse only the files with existing checksums
 		for filePath := range checksumDB.Checksums {
-			filesToProcess = append(filesToProcess, filePath)
+			absPath, err := filepath.Abs(filePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get absolute path for %s: %v", filePath, err)
+			}
+			filesToProcess = append(filesToProcess, absPath)
 		}
 	case "list-missing", "add-missing":
 		// Traverse all files on the disk
@@ -85,7 +89,11 @@ func getFilesToProcess(mode string, directory string, checksumDB *ChecksumDB) ([
 			}
 
 			if !info.IsDir() {
-				filesToProcess = append(filesToProcess, path)
+				absPath, err := filepath.Abs(path)
+				if err != nil {
+					return fmt.Errorf("failed to get absolute path for %s: %v", path, err)
+				}
+				filesToProcess = append(filesToProcess, absPath)
 			}
 
 			return nil
