@@ -49,4 +49,4 @@ Add checksums for missing files in the "Videos" directory to the database, using
 
 ## Attribution
 
-checksumtool is developed by Toni Melisma and released in 2024.
+checksumtool is developed by Toni Melisma and released in 2024. The code was almost entirely written by Claude 3 Opus based on my algorithm and instructions.
