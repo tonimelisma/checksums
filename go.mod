@@ -1,3 +1,3 @@
-module github.com/tonimelisma/checksums
+module github.com/tonimelisma/checksumtool
 
 go 1.21.1
