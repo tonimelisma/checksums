@@ -64,7 +64,7 @@ func TestWorker(t *testing.T) {
 
 	// Start the worker goroutine
 	wg.Add(1)
-	go worker(jobs, results, &wg)
+	go worker(jobs, results, true, &wg)
 
 	// Wait for the worker to finish
 	wg.Wait()
@@ -139,7 +139,7 @@ func TestGetFilesToProcess(t *testing.T) {
 	}
 
 	// Test case 1: "check" mode
-	files, err := getFilesToProcess("check", tempDir, checksumDB)
+	files, calculateChecksums, err := getFilesToProcess("check", []string{tempDir}, checksumDB)
 	if err != nil {
 		t.Errorf("Unexpected error in 'check' mode: %v", err)
 	}
@@ -147,9 +147,12 @@ func TestGetFilesToProcess(t *testing.T) {
 	if !reflect.DeepEqual(files, expectedFiles) {
 		t.Errorf("File list mismatch in 'check' mode. Expected: %v, Got: %v", expectedFiles, files)
 	}
+	if !calculateChecksums {
+		t.Error("Expected calculateChecksums to be true in 'check' mode")
+	}
 
 	// Test case 2: "update" mode
-	files, err = getFilesToProcess("update", tempDir, checksumDB)
+	files, calculateChecksums, err = getFilesToProcess("update", []string{tempDir}, checksumDB)
 	if err != nil {
 		t.Errorf("Unexpected error in 'update' mode: %v", err)
 	}
@@ -157,9 +160,12 @@ func TestGetFilesToProcess(t *testing.T) {
 	if !reflect.DeepEqual(files, expectedFiles) {
 		t.Errorf("File list mismatch in 'update' mode. Expected: %v, Got: %v", expectedFiles, files)
 	}
+	if !calculateChecksums {
+		t.Error("Expected calculateChecksums to be true in 'update' mode")
+	}
 
 	// Test case 3: "list-missing" mode
-	files, err = getFilesToProcess("list-missing", tempDir, checksumDB)
+	files, calculateChecksums, err = getFilesToProcess("list-missing", []string{tempDir}, checksumDB)
 	if err != nil {
 		t.Errorf("Unexpected error in 'list-missing' mode: %v", err)
 	}
@@ -167,19 +173,25 @@ func TestGetFilesToProcess(t *testing.T) {
 	if !reflect.DeepEqual(files, expectedFiles) {
 		t.Errorf("File list mismatch in 'list-missing' mode. Expected: %v, Got: %v", expectedFiles, files)
 	}
+	if calculateChecksums {
+		t.Error("Expected calculateChecksums to be false in 'list-missing' mode")
+	}
 
 	// Test case 4: "add-missing" mode
-	files, err = getFilesToProcess("add-missing", tempDir, checksumDB)
+	files, calculateChecksums, err = getFilesToProcess("add-missing", []string{tempDir}, checksumDB)
 	if err != nil {
 		t.Errorf("Unexpected error in 'add-missing' mode: %v", err)
 	}
-	expectedFiles = []string{file1.Name(), file2.Name()}
+	expectedFiles = []string{file2.Name()}
 	if !reflect.DeepEqual(files, expectedFiles) {
 		t.Errorf("File list mismatch in 'add-missing' mode. Expected: %v, Got: %v", expectedFiles, files)
 	}
+	if !calculateChecksums {
+		t.Error("Expected calculateChecksums to be true in 'add-missing' mode")
+	}
 
 	// Test case 5: invalid mode
-	_, err = getFilesToProcess("invalid", tempDir, checksumDB)
+	_, _, err = getFilesToProcess("invalid", []string{tempDir}, checksumDB)
 	if err == nil {
 		t.Error("Expected an error for invalid mode, but got nil")
 	}

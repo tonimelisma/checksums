@@ -1,3 +1,6 @@
+// checksumtool - A tool for calculating and comparing file checksums
+// Copyright (C) 2024 Toni Melisma
+
 package main
 
 import (
@@ -35,20 +38,6 @@ func calculateChecksum(filePath string) (uint32, error) {
 	return hash.Sum32(), nil
 }
 
-func worker(jobs <-chan string, results chan<- map[string]uint32, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	for filePath := range jobs {
-		checksum, err := calculateChecksum(filePath)
-		if err != nil {
-			fmt.Printf("Error calculating checksum for file %s: %v\n", filePath, err)
-			continue
-		}
-
-		results <- map[string]uint32{filePath: checksum}
-	}
-}
-
 func loadChecksumDB(dbFilePath string, verbose bool) *ChecksumDB {
 	if verbose {
 		fmt.Println("Loading checksum database...")
@@ -68,45 +57,75 @@ func loadChecksumDB(dbFilePath string, verbose bool) *ChecksumDB {
 	return checksumDB
 }
 
-func getFilesToProcess(mode string, directory string, checksumDB *ChecksumDB) ([]string, error) {
+func getFilesToProcess(mode string, directories []string, checksumDB *ChecksumDB) ([]string, bool, error) {
 	var filesToProcess []string
+	var calculateChecksums bool
 
 	switch mode {
 	case "check", "update":
 		// Traverse only the files with existing checksums
+		calculateChecksums = true
 		for filePath := range checksumDB.Checksums {
 			absPath, err := filepath.Abs(filePath)
 			if err != nil {
-				return nil, fmt.Errorf("failed to get absolute path for %s: %v", filePath, err)
+				return nil, false, fmt.Errorf("failed to get absolute path for %s: %v", filePath, err)
 			}
 			filesToProcess = append(filesToProcess, absPath)
 		}
 	case "list-missing", "add-missing":
-		// Traverse all files on the disk
-		err := filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-
-			if !info.IsDir() {
-				absPath, err := filepath.Abs(path)
+		// Traverse all files in the specified directories
+		calculateChecksums = mode == "add-missing"
+		for _, directory := range directories {
+			err := filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
-					return fmt.Errorf("failed to get absolute path for %s: %v", path, err)
+					return err
 				}
-				filesToProcess = append(filesToProcess, absPath)
+
+				if !info.IsDir() {
+					absPath, err := filepath.Abs(path)
+					if err != nil {
+						return fmt.Errorf("failed to get absolute path for %s: %v", path, err)
+					}
+					if mode == "add-missing" {
+						if _, ok := checksumDB.Checksums[absPath]; !ok {
+							filesToProcess = append(filesToProcess, absPath)
+						}
+					} else {
+						filesToProcess = append(filesToProcess, absPath)
+					}
+				}
+
+				return nil
+			})
+
+			if err != nil {
+				return nil, false, err
 			}
-
-			return nil
-		})
-
-		if err != nil {
-			return nil, err
 		}
 	default:
-		return nil, fmt.Errorf("invalid operation mode: %s", mode)
+		return nil, false, fmt.Errorf("invalid operation mode: %s", mode)
 	}
 
-	return filesToProcess, nil
+	return filesToProcess, calculateChecksums, nil
+}
+
+func worker(jobs <-chan string, results chan<- map[string]uint32, calculateChecksums bool, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for filePath := range jobs {
+		var checksum uint32
+		var err error
+
+		if calculateChecksums {
+			checksum, err = calculateChecksum(filePath)
+			if err != nil {
+				fmt.Printf("Error calculating checksum for file %s: %v\n", filePath, err)
+				continue
+			}
+		}
+
+		results <- map[string]uint32{filePath: checksum}
+	}
 }
 
 func saveChecksumDB(dbFilePath string, checksumDB *ChecksumDB, verbose bool) {
@@ -178,7 +197,10 @@ func updateProgressBar(done <-chan struct{}, totalFiles int, processedFiles *uin
 		case <-ticker.C:
 			processed := atomic.LoadUint64(processedFiles)
 			elapsed := time.Since(startTime)
-			estimatedTotal := time.Duration(int64(elapsed) * int64(totalFiles) / int64(processed))
+			estimatedTotal := time.Duration(int64(0))
+			if processed > 0 {
+				estimatedTotal = time.Duration(int64(elapsed) * int64(totalFiles) / int64(processed))
+			}
 			elapsedHuman := formatDuration(elapsed)
 			estimatedTotalHuman := formatDuration(estimatedTotal)
 			fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
@@ -198,20 +220,19 @@ func handleInterrupt(interruptChan chan os.Signal, dbFilePath string, checksumDB
 }
 
 func main() {
-	var directory string
 	var dbFilePath string
 	var verbose bool
 	var mode string
 	var numWorkers int
-	flag.StringVar(&directory, "dir", "", "Directory to scan")
 	flag.StringVar(&dbFilePath, "db", filepath.Join(os.Getenv("HOME"), ".local/lib/checksums.json"), "Checksum database file location")
 	flag.BoolVar(&verbose, "verbose", false, "Enable verbose output")
 	flag.StringVar(&mode, "mode", "", "Operation mode: check, update, list-missing, add-missing")
 	flag.IntVar(&numWorkers, "workers", 4, "Number of worker goroutines")
 	flag.Parse()
 
-	if directory == "" {
-		fmt.Println("Please provide a directory to scan using the -dir flag.")
+	directories := flag.Args()
+	if len(directories) == 0 {
+		fmt.Println("Please provide one or more directories to scan.")
 		os.Exit(1)
 	}
 
@@ -222,7 +243,7 @@ func main() {
 
 	checksumDB := loadChecksumDB(dbFilePath, verbose)
 
-	filesToProcess, err := getFilesToProcess(mode, directory, checksumDB)
+	filesToProcess, calculateChecksums, err := getFilesToProcess(mode, directories, checksumDB)
 	if err != nil {
 		fmt.Println("Error:", err)
 		os.Exit(1)
@@ -239,7 +260,7 @@ func main() {
 	// Create worker goroutines
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go worker(jobs, results, &wg)
+		go worker(jobs, results, calculateChecksums, &wg)
 	}
 
 	// Handle interrupt signal in a separate goroutine
