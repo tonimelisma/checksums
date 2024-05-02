@@ -1,5 +1,9 @@
 // checksumtool - A tool for calculating and comparing file checksums
 // Copyright (C) 2024 Toni Melisma
+//
+// TODO exit on ctrl-C
+// TODO check for deleted files when comparing checksums
+// TODO delete deleted files from checksum db when adding/updating
 
 package main
 
