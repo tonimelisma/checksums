@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestCalculateChecksum(t *testing.T) {
@@ -240,5 +241,121 @@ func TestSaveChecksumDB(t *testing.T) {
 	// Compare the saved content with the expected content
 	if !reflect.DeepEqual(savedDB, expectedDB) {
 		t.Errorf("Saved checksum database content mismatch. Expected: %v, Got: %v", expectedDB, savedDB)
+	}
+}
+
+func TestProcessResults(t *testing.T) {
+	// Create a checksum database for testing
+	checksumDB := &ChecksumDB{
+		Checksums: map[string]uint32{
+			"file1": 1234,
+			"file2": 5678,
+		},
+	}
+
+	// Create channels and wait group for testing
+	results := make(chan map[string]uint32, 3)
+	done := make(chan struct{})
+	var processedFiles uint64
+
+	// Test case 1: "check" mode
+	results <- map[string]uint32{"file1": 1234}
+	results <- map[string]uint32{"file2": 0}
+	results <- map[string]uint32{"file3": 9012}
+	close(results)
+
+	processResults(results, done, "check", checksumDB, &processedFiles)
+	<-done
+
+	// Test case 2: "update" mode
+	results = make(chan map[string]uint32, 3)
+	done = make(chan struct{})
+	processedFiles = 0
+
+	results <- map[string]uint32{"file1": 1234}
+	results <- map[string]uint32{"file2": 0}
+	results <- map[string]uint32{"file3": 9012}
+	close(results)
+
+	processResults(results, done, "update", checksumDB, &processedFiles)
+	<-done
+
+	// Check if the missing file is removed from the checksum database
+	if _, ok := checksumDB.Checksums["file2"]; ok {
+		t.Error("Missing file should have been removed from the checksum database")
+	}
+
+	// Check if the new file is added to the checksum database
+	if checksumDB.Checksums["file3"] != 9012 {
+		t.Error("New file should have been added to the checksum database")
+	}
+
+	// Test case 3: "list-missing" mode
+	results = make(chan map[string]uint32, 2)
+	done = make(chan struct{})
+	processedFiles = 0
+
+	results <- map[string]uint32{"file1": 0}
+	results <- map[string]uint32{"file4": 0}
+	close(results)
+
+	processResults(results, done, "list-missing", checksumDB, &processedFiles)
+	<-done
+
+	// Test case 4: "add-missing" mode
+	results = make(chan map[string]uint32, 2)
+	done = make(chan struct{})
+	processedFiles = 0
+
+	results <- map[string]uint32{"file4": 3456}
+	results <- map[string]uint32{"file5": 0}
+	close(results)
+
+	processResults(results, done, "add-missing", checksumDB, &processedFiles)
+	<-done
+
+	// Check if the new file is added to the checksum database
+	if checksumDB.Checksums["file4"] != 3456 {
+		t.Error("New file should have been added to the checksum database")
+	}
+}
+
+func TestFileExists(t *testing.T) {
+	// Create a temporary file for testing
+	tempFile, err := os.CreateTemp("", "testfile")
+	if err != nil {
+		t.Fatalf("Failed to create temporary file: %v", err)
+	}
+	defer os.Remove(tempFile.Name())
+	tempFile.Close()
+
+	// Test case 1: file exists
+	if !fileExists(tempFile.Name()) {
+		t.Error("Expected fileExists to return true for an existing file")
+	}
+
+	// Test case 2: file doesn't exist
+	if fileExists("nonexistent_file") {
+		t.Error("Expected fileExists to return false for a nonexistent file")
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	// Test cases
+	testCases := []struct {
+		duration time.Duration
+		expected string
+	}{
+		{time.Second * 30, "30s"},
+		{time.Minute * 2, "2m0s"},
+		{time.Hour*1 + time.Minute*30 + time.Second*15, "1h30m15s"},
+	}
+
+	// Run test cases
+	for _, tc := range testCases {
+		result := formatDuration(tc.duration)
+		if result != tc.expected {
+			t.Errorf("Formatted duration mismatch. Expected: %s, Got: %s", tc.expected, result)
+		}
 	}
 }
