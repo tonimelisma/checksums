@@ -1,9 +1,5 @@
 // checksumtool - A tool for calculating and comparing file checksums
 // Copyright (C) 2024 Toni Melisma
-//
-// TODO exit on ctrl-C
-// TODO check for deleted files when comparing checksums
-// TODO delete deleted files from checksum db when adding/updating
 
 package main
 
@@ -182,7 +178,9 @@ func processResults(results <-chan map[string]uint32, done chan<- struct{}, mode
 				if checksum == 0 {
 					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
 					fmt.Printf("File missing: %s\n", filePath)
+					checksumDB.mutex.Lock()
 					delete(checksumDB.Checksums, filePath)
+					checksumDB.mutex.Unlock()
 				} else if storedChecksum, ok := checksumDB.Checksums[filePath]; !ok || checksum != storedChecksum {
 					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
 					fmt.Printf("Changed or new file: %s\n", filePath)
