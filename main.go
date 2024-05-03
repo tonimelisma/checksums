@@ -117,6 +117,11 @@ func worker(jobs <-chan string, results chan<- map[string]uint32, calculateCheck
 	defer wg.Done()
 
 	for filePath := range jobs {
+		if !fileExists(filePath) {
+			results <- map[string]uint32{filePath: 0}
+			continue
+		}
+
 		var checksum uint32
 		var err error
 
@@ -163,12 +168,22 @@ func processResults(results <-chan map[string]uint32, done chan<- struct{}, mode
 
 			switch mode {
 			case "check":
-				if storedChecksum, ok := checksumDB.Checksums[filePath]; ok && checksum != storedChecksum {
+				if storedChecksum, ok := checksumDB.Checksums[filePath]; !ok {
+					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
+					fmt.Printf("File not in database: %s\n", filePath)
+				} else if checksum == 0 {
+					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
+					fmt.Printf("File missing: %s\n", filePath)
+				} else if checksum != storedChecksum {
 					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
 					fmt.Printf("Mismatch for file: %s\n", filePath)
 				}
 			case "update":
-				if storedChecksum, ok := checksumDB.Checksums[filePath]; !ok || checksum != storedChecksum {
+				if checksum == 0 {
+					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
+					fmt.Printf("File missing: %s\n", filePath)
+					delete(checksumDB.Checksums, filePath)
+				} else if storedChecksum, ok := checksumDB.Checksums[filePath]; !ok || checksum != storedChecksum {
 					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
 					fmt.Printf("Changed or new file: %s\n", filePath)
 					checksumDB.mutex.Lock()
@@ -179,17 +194,30 @@ func processResults(results <-chan map[string]uint32, done chan<- struct{}, mode
 				if _, ok := checksumDB.Checksums[filePath]; !ok {
 					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
 					fmt.Printf("Missing checksum: %s\n", filePath)
+				} else if checksum == 0 {
+					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
+					fmt.Printf("File missing: %s\n", filePath)
 				}
 			case "add-missing":
 				if _, ok := checksumDB.Checksums[filePath]; !ok {
-					checksumDB.mutex.Lock()
-					checksumDB.Checksums[filePath] = checksum
-					checksumDB.mutex.Unlock()
+					if checksum != 0 {
+						checksumDB.mutex.Lock()
+						checksumDB.Checksums[filePath] = checksum
+						checksumDB.mutex.Unlock()
+					} else {
+						fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
+						fmt.Printf("File missing: %s\n", filePath)
+					}
 				}
 			}
 		}
 	}
 	close(done)
+}
+
+func fileExists(filePath string) bool {
+	_, err := os.Stat(filePath)
+	return err == nil
 }
 
 func updateProgressBar(done <-chan struct{}, totalFiles int, processedFiles *uint64, startTime time.Time) {
