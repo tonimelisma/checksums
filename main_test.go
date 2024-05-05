@@ -191,7 +191,20 @@ func TestGetFilesToProcess(t *testing.T) {
 		t.Error("Expected calculateChecksums to be true in 'add-missing' mode")
 	}
 
-	// Test case 5: invalid mode
+	// Test case 5: "remove-missing" mode
+	files, calculateChecksums, err = getFilesToProcess("remove-missing", []string{tempDir}, checksumDB)
+	if err != nil {
+		t.Errorf("Unexpected error in 'remove-missing' mode: %v", err)
+	}
+	expectedFiles = []string{file1.Name()}
+	if !reflect.DeepEqual(files, expectedFiles) {
+		t.Errorf("File list mismatch in 'remove-missing' mode. Expected: %v, Got: %v", expectedFiles, files)
+	}
+	if calculateChecksums {
+		t.Error("Expected calculateChecksums to be false in 'remove-missing' mode")
+	}
+
+	// Test case 6: invalid mode
 	_, _, err = getFilesToProcess("invalid", []string{tempDir}, checksumDB)
 	if err == nil {
 		t.Error("Expected an error for invalid mode, but got nil")
@@ -268,22 +281,16 @@ func TestProcessResults(t *testing.T) {
 	<-done
 
 	// Test case 2: "update" mode
-	results = make(chan map[string]uint32, 3)
+	results = make(chan map[string]uint32, 2)
 	done = make(chan struct{})
 	processedFiles = 0
 
 	results <- map[string]uint32{"file1": 1234}
-	results <- map[string]uint32{"file2": 0}
 	results <- map[string]uint32{"file3": 9012}
 	close(results)
 
 	processResults(results, done, "update", checksumDB, &processedFiles)
 	<-done
-
-	// Check if the missing file is removed from the checksum database
-	if _, ok := checksumDB.Checksums["file2"]; ok {
-		t.Error("Missing file should have been removed from the checksum database")
-	}
 
 	// Check if the new file is added to the checksum database
 	if checksumDB.Checksums["file3"] != 9012 {
@@ -317,6 +324,26 @@ func TestProcessResults(t *testing.T) {
 	// Check if the new file is added to the checksum database
 	if checksumDB.Checksums["file4"] != 3456 {
 		t.Error("New file should have been added to the checksum database")
+	}
+
+	// Test case 5: "remove-missing" mode
+	results = make(chan map[string]uint32, 2)
+	done = make(chan struct{})
+	processedFiles = 0
+
+	results <- map[string]uint32{"file1": 0}
+	results <- map[string]uint32{"file2": 0}
+	close(results)
+
+	processResults(results, done, "remove-missing", checksumDB, &processedFiles)
+	<-done
+
+	// Check if the missing files are removed from the checksum database
+	if _, ok := checksumDB.Checksums["file1"]; ok {
+		t.Error("Missing file should have been removed from the checksum database")
+	}
+	if _, ok := checksumDB.Checksums["file2"]; ok {
+		t.Error("Missing file should have been removed from the checksum database")
 	}
 }
 

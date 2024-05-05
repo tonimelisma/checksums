@@ -72,9 +72,9 @@ func getFilesToProcess(mode string, directories []string, checksumDB *ChecksumDB
 			}
 			filesToProcess = append(filesToProcess, absPath)
 		}
-	case "list-missing", "add-missing":
+	case "list-missing":
 		// Traverse all files in the specified directories
-		calculateChecksums = mode == "add-missing"
+		calculateChecksums = false
 		for _, directory := range directories {
 			err := filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
@@ -86,11 +86,7 @@ func getFilesToProcess(mode string, directories []string, checksumDB *ChecksumDB
 					if err != nil {
 						return fmt.Errorf("failed to get absolute path for %s: %v", path, err)
 					}
-					if mode == "add-missing" {
-						if _, ok := checksumDB.Checksums[absPath]; !ok {
-							filesToProcess = append(filesToProcess, absPath)
-						}
-					} else {
+					if _, ok := checksumDB.Checksums[absPath]; !ok {
 						filesToProcess = append(filesToProcess, absPath)
 					}
 				}
@@ -101,6 +97,38 @@ func getFilesToProcess(mode string, directories []string, checksumDB *ChecksumDB
 			if err != nil {
 				return nil, false, err
 			}
+		}
+	case "add-missing":
+		// Traverse all files in the specified directories
+		calculateChecksums = true
+		for _, directory := range directories {
+			err := filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+
+				if !info.IsDir() {
+					absPath, err := filepath.Abs(path)
+					if err != nil {
+						return fmt.Errorf("failed to get absolute path for %s: %v", path, err)
+					}
+					if _, ok := checksumDB.Checksums[absPath]; !ok {
+						filesToProcess = append(filesToProcess, absPath)
+					}
+				}
+
+				return nil
+			})
+
+			if err != nil {
+				return nil, false, err
+			}
+		}
+	case "remove-deleted", "list-deleted":
+		// Traverse only the files with existing checksums
+		calculateChecksums = false
+		for filePath := range checksumDB.Checksums {
+			filesToProcess = append(filesToProcess, filePath)
 		}
 	default:
 		return nil, false, fmt.Errorf("invalid operation mode: %s", mode)
@@ -175,13 +203,7 @@ func processResults(results <-chan map[string]uint32, done chan<- struct{}, mode
 					fmt.Printf("Mismatch for file: %s\n", filePath)
 				}
 			case "update":
-				if checksum == 0 {
-					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
-					fmt.Printf("File missing: %s\n", filePath)
-					checksumDB.mutex.Lock()
-					delete(checksumDB.Checksums, filePath)
-					checksumDB.mutex.Unlock()
-				} else if storedChecksum, ok := checksumDB.Checksums[filePath]; !ok || checksum != storedChecksum {
+				if storedChecksum, ok := checksumDB.Checksums[filePath]; !ok || checksum != storedChecksum {
 					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
 					fmt.Printf("Changed or new file: %s\n", filePath)
 					checksumDB.mutex.Lock()
@@ -189,13 +211,8 @@ func processResults(results <-chan map[string]uint32, done chan<- struct{}, mode
 					checksumDB.mutex.Unlock()
 				}
 			case "list-missing":
-				if _, ok := checksumDB.Checksums[filePath]; !ok {
-					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
-					fmt.Printf("Missing checksum: %s\n", filePath)
-				} else if checksum == 0 {
-					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
-					fmt.Printf("File missing: %s\n", filePath)
-				}
+				fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
+				fmt.Printf("File not in database: %s\n", filePath)
 			case "add-missing":
 				if _, ok := checksumDB.Checksums[filePath]; !ok {
 					if checksum != 0 {
@@ -206,6 +223,19 @@ func processResults(results <-chan map[string]uint32, done chan<- struct{}, mode
 						fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
 						fmt.Printf("File missing: %s\n", filePath)
 					}
+				}
+			case "remove-deleted":
+				if !fileExists(filePath) {
+					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
+					fmt.Printf("File deleted, removing from database: %s\n", filePath)
+					checksumDB.mutex.Lock()
+					delete(checksumDB.Checksums, filePath)
+					checksumDB.mutex.Unlock()
+				}
+			case "list-deleted":
+				if !fileExists(filePath) {
+					fmt.Printf("\r\033[2K") // Move cursor to the beginning of the line and clear the line
+					fmt.Printf("File deleted: %s\n", filePath)
 				}
 			}
 		}
@@ -256,7 +286,7 @@ func main() {
 	var numWorkers int
 	flag.StringVar(&dbFilePath, "db", filepath.Join(os.Getenv("HOME"), ".local/lib/checksums.json"), "Checksum database file location")
 	flag.BoolVar(&verbose, "verbose", false, "Enable verbose output")
-	flag.StringVar(&mode, "mode", "", "Operation mode: check, update, list-missing, add-missing")
+	flag.StringVar(&mode, "mode", "", "Operation mode: check, update, list-missing, add-missing, remove-deleted, list-deleted")
 	flag.IntVar(&numWorkers, "workers", 4, "Number of worker goroutines")
 	flag.Parse()
 
@@ -267,7 +297,7 @@ func main() {
 	}
 
 	if mode == "" {
-		fmt.Println("Please specify an operation mode using the -mode flag: check, update, list-missing, add-missing")
+		fmt.Println("Please specify an operation mode using the -mode flag: check, update, list-missing, add-missing, remove-deleted, list-deleted")
 		os.Exit(1)
 	}
 
@@ -325,7 +355,7 @@ func main() {
 	}
 
 	// Save the updated checksum database if necessary
-	if mode == "update" || mode == "add-missing" {
+	if mode == "update" || mode == "add-missing" || mode == "remove-deleted" {
 		saveChecksumDB(dbFilePath, checksumDB, verbose)
 	}
 }
