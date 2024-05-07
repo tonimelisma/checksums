@@ -1,5 +1,7 @@
 // checksumtool - A tool for calculating and comparing file checksums
 // Copyright (C) 2024 Toni Melisma
+//
+// TODO fix testing
 
 package main
 
