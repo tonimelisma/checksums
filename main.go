@@ -343,7 +343,9 @@ func main() {
 	go processResults(results, done, mode, checksumDB, &processedFiles)
 
 	// Update progress bar in a separate goroutine
-	go updateProgressBar(done, totalFiles, &processedFiles, startTime)
+	if verbose {
+		go updateProgressBar(done, totalFiles, &processedFiles, startTime)
+	}
 
 	// Wait for all worker goroutines to finish
 	wg.Wait()
